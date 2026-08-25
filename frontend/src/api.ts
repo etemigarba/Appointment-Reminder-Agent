@@ -9,6 +9,9 @@ export interface Settings {
   timezone: string
   twilio_number: string | null
   google_connected: boolean
+  calendar_provider: 'google' | 'outlook' | 'calendly'
+  plan: string
+  subscription_status: string
 }
 
 export interface Appointment {
@@ -84,10 +87,19 @@ export const api = {
   getSettings: () => request<Settings>('/api/settings'),
   patchSettings: (
     payload: Partial<
-      Pick<Settings, 'approval_mode' | 'reminder_offsets_minutes' | 'reminder_template' | 'timezone'>
+      Pick<
+        Settings,
+        | 'approval_mode'
+        | 'reminder_offsets_minutes'
+        | 'reminder_template'
+        | 'timezone'
+        | 'calendar_provider'
+      >
     >,
   ) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  startCheckout: () =>
+    request<{ checkout_url: string }>('/api/billing/checkout', { method: 'POST' }),
   listAppointments: () => request<Appointment[]>('/api/appointments'),
   listConversations: () => request<Conversation[]>('/api/conversations'),
   listMessages: (conversationId: string) =>

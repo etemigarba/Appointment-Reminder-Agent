@@ -114,4 +114,12 @@ def build_adapters() -> dict[str, object]:
     else:
         adapters["email"] = LoggingStubAdapter()
 
+    meta_token = os.environ.get("META_WHATSAPP_TOKEN", "")
+    meta_phone_id = os.environ.get("META_PHONE_NUMBER_ID", "")
+    if meta_token and meta_phone_id:
+        # Native Meta WhatsApp takes precedence over Twilio-hosted WhatsApp.
+        from app.channels.meta_whatsapp import MetaWhatsAppSender
+
+        adapters["whatsapp"] = MetaWhatsAppSender(meta_token, meta_phone_id)
+
     return adapters

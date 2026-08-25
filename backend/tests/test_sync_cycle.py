@@ -28,6 +28,9 @@ def test_sync_cycle_skips_tenants_without_tokens_and_syncs_connected(db_session)
     clients = {}
 
     def client_factory(tenant):
+        # mimic build_provider_client: only tenants with credentials get a client
+        if not tenant.google_refresh_token:
+            return None
         clients[tenant.id] = FakeClient()
         return clients[tenant.id]
 

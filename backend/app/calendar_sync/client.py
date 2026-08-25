@@ -1,14 +1,17 @@
-"""Google Calendar client abstraction.
+"""Calendar provider abstraction.
 
-The real REST client imports google-api-python-client lazily so the core
-install stays light; tests use in-memory fakes against the same protocol.
+All providers (Google, Outlook, Calendly) implement the CalendarProvider
+protocol and return NormalizedEvent objects. The Google REST client imports
+google-api-python-client lazily; tests use in-memory fakes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import Any, Protocol
+
+from app.calendar_sync.normalize import NormalizedEvent
 
 
 @dataclass
@@ -18,44 +21,36 @@ class SyncResult:
     skipped: int = 0
 
 
-class GoogleCalendarClient(Protocol):
-    def list_events(self, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
-        """Return Google Calendar API v3 event resources in [time_min, time_max)."""
+class CalendarProvider(Protocol):
+    def list_events(self, time_min: datetime, time_max: datetime) -> list[NormalizedEvent]:
+        """Return events starting in [time_min, time_max), normalized."""
         ...
 
 
+# Backwards-compatible alias — google was the first provider.
+GoogleCalendarClient = CalendarProvider
+
+
 class FakeGoogleCalendarClient:
-    """In-memory client used by the test suite (no credentials needed)."""
+    """In-memory client used by the test suite (no credentials needed).
 
-    def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
-        self.events: list[dict[str, Any]] = events or []
+    Accepts NormalizedEvent instances or dicts in normalized shape.
+    """
 
-    def list_events(self, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
-        selected: list[dict[str, Any]] = []
-        for event in self.events:
-            raw = (event.get("start") or {}).get("dateTime")
-            if raw is not None:
-                if time_min <= _parse_start(event) < time_max:
-                    selected.append(event)
-            elif (event.get("start") or {}).get("date") is not None:
-                # All-day events are returned by the real API too; the sync
-                # service decides whether to skip them.
-                if _event_date_in_range(event, time_min, time_max):
-                    selected.append(event)
-        return selected
+    def __init__(self, events: list[NormalizedEvent | dict] | None = None) -> None:
+        self.events: list[NormalizedEvent] = [
+            e if isinstance(e, NormalizedEvent) else NormalizedEvent(**e) for e in (events or [])
+        ]
 
-
-def _event_date_in_range(event: dict[str, Any], time_min: datetime, time_max: datetime) -> bool:
-    raw = event["start"]["date"]
-    try:
-        day = date.fromisoformat(raw)
-    except ValueError:
-        return False
-    return time_min.date() <= day < time_max.date()
+    def list_events(self, time_min: datetime, time_max: datetime) -> list[NormalizedEvent]:
+        return [e for e in self.events if e.start_dt and time_min <= e.start_dt < time_max]
 
 
 class GoogleCalendarRestClient:
-    """Thin wrapper over google-api-python-client; requires the `google` extra."""
+    """Thin wrapper over google-api-python-client; requires the `google` extra.
+
+    Translates Google API v3 payloads into NormalizedEvent.
+    """
 
     def __init__(self, credentials: Any, calendar_id: str = "primary") -> None:
         try:
@@ -68,8 +63,8 @@ class GoogleCalendarRestClient:
         self._service = build("calendar", "v3", credentials=credentials)
         self.calendar_id = calendar_id
 
-    def list_events(self, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
+    def list_events(self, time_min: datetime, time_max: datetime) -> list[NormalizedEvent]:
+        events: list[NormalizedEvent] = []
         page_token: str | None = None
         while True:
             response = (
@@ -84,14 +79,34 @@ class GoogleCalendarRestClient:
                 )
                 .execute()
             )
-            events.extend(response.get("items", []))
+            for item in response.get("items", []):
+                event = _normalize_google_event(item)
+                if event is not None:
+                    events.append(event)
             page_token = response.get("nextPageToken")
             if not page_token:
                 return events
 
 
-def _parse_start(event: dict[str, Any]) -> datetime | None:
-    raw = (event.get("start") or {}).get("dateTime")
-    if not raw:
-        return None
-    return datetime.fromisoformat(raw)
+def _normalize_google_event(item: dict[str, Any]) -> NormalizedEvent | None:
+    start_raw = (item.get("start") or {}).get("dateTime")
+    if not start_raw:
+        return None  # all-day events are skipped by normalization
+    end_raw = (item.get("end") or {}).get("dateTime")
+    attendees = tuple(
+        a["email"]
+        for a in item.get("attendees", [])
+        if isinstance(a, dict) and a.get("email")
+    )
+    return NormalizedEvent(
+        id=item["id"],
+        title=item.get("summary") or "",
+        start=start_raw,
+        end=end_raw,
+        attendee_emails=attendees,
+    )
+
+
+def normalize_google_date_guard(event: dict[str, Any]) -> bool:
+    """Retained helper: True when a raw google payload is an all-day event."""
+    return (event.get("start") or {}).get("date") is not None

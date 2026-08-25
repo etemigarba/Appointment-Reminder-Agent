@@ -105,6 +105,11 @@ class Tenant(Base):
     google_refresh_token: Mapped[str | None] = mapped_column(String(500), default=None)
     google_calendar_id: Mapped[str | None] = mapped_column(String(320), default=None)
     twilio_number: Mapped[str | None] = mapped_column(String(32), unique=True, default=None)
+    calendar_provider: Mapped[str] = mapped_column(String(16), default="google")
+    provider_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(120), default=None)
+    subscription_status: Mapped[str] = mapped_column(String(24), default="none")
+    plan: Mapped[str] = mapped_column(String(24), default="none")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
     customers: Mapped[list[Customer]] = relationship(back_populates="tenant")

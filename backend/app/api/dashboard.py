@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,7 @@ class SettingsIn(BaseModel):
     reminder_offsets_minutes: list[int] | None = None
     reminder_template: str | None = Field(default=None, max_length=MAX_TEMPLATE_LENGTH)
     timezone: str | None = None
+    calendar_provider: str | None = None
 
 
 class SettingsOut(BaseModel):
@@ -36,6 +38,9 @@ class SettingsOut(BaseModel):
     timezone: str
     twilio_number: str | None
     google_connected: bool
+    calendar_provider: str
+    plan: str
+    subscription_status: str
 
 
 class AppointmentOut(BaseModel):
@@ -76,6 +81,9 @@ def _settings_out(tenant) -> SettingsOut:
         timezone=tenant.timezone or "UTC",
         twilio_number=tenant.twilio_number,
         google_connected=bool(tenant.google_refresh_token),
+        calendar_provider=tenant.calendar_provider or "google",
+        plan=tenant.plan or "none",
+        subscription_status=tenant.subscription_status or "none",
     )
 
 
@@ -96,8 +104,33 @@ def patch_settings(payload: SettingsIn, tenant: CurrentTenant, session: DbSessio
         except Exception as exc:
             raise HTTPException(status_code=422, detail="Unknown IANA timezone") from exc
         tenant.timezone = payload.timezone
+    if payload.calendar_provider is not None:
+        provider = payload.calendar_provider.lower()
+        if provider not in ("google", "outlook", "calendly"):
+            raise HTTPException(status_code=422, detail="Unsupported calendar provider")
+        tenant.calendar_provider = provider
     session.commit()
     return _settings_out(tenant)
+
+
+class CalendlyTokenIn(BaseModel):
+    api_token: str
+
+
+@router.post("/calendars/calendly")
+def set_calendly_token(payload: CalendlyTokenIn, tenant: CurrentTenant, session: DbSession):
+    """Store a Calendly personal access token for the sync worker."""
+    config = {}
+    if tenant.provider_config:
+        try:
+            config = json.loads(tenant.provider_config)
+        except (TypeError, ValueError):
+            config = {}
+    config["api_token"] = payload.api_token
+    tenant.provider_config = json.dumps(config)
+    tenant.calendar_provider = "calendly"
+    session.commit()
+    return {"ok": True}
 
 
 @router.get("/appointments", response_model=list[AppointmentOut])

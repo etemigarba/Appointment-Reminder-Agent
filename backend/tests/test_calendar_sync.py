@@ -1,37 +1,33 @@
-"""C6: calendar sync maps Google event payloads to Appointment rows (PRD FR-2/FR-4)."""
+"""C6: calendar sync maps provider payloads to Appointment rows (FR-2/FR-4)."""
 
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
 from app.calendar_sync.client import FakeGoogleCalendarClient
+from app.calendar_sync.normalize import NormalizedEvent
 from app.calendar_sync.sync_service import normalize_phone, sync_appointments
 from app.models.entities import Appointment
 
 BASE = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
-def _event(event_id, summary=None, description=None, attendees=None, offset_hours=0):
-    start = BASE + timedelta(hours=offset_hours)
-    payload = {
-        "id": event_id,
-        "summary": summary,
-        "description": description,
-        "start": {"dateTime": start.isoformat()},
-        "end": {"dateTime": (start + timedelta(hours=1)).isoformat()},
-    }
-    if attendees is not None:
-        payload["attendees"] = [{"email": e} for e in attendees]
-    return payload
+def _event(event_id, title="Cut & color", start=None, emails=None):
+    start = start or BASE + timedelta(hours=2)
+    return NormalizedEvent(
+        id=event_id,
+        title=title,
+        start=start.isoformat(),
+        end=(start + timedelta(hours=1)).isoformat(),
+        attendee_emails=tuple(emails or []),
+    )
 
 
 def test_sync_creates_appointments_with_customer_match(db_session, tenant, customer):
-    client = FakeGoogleCalendarClient(
-        [
-            _event("evt_a", summary="Cut & color", attendees=[customer.email], offset_hours=2),
-            _event("evt_b", summary="Call Jane +1 555 123 4567", offset_hours=4),
-        ]
-    )
+    client = FakeGoogleCalendarClient([
+        _event("evt_a", emails=[customer.email]),
+        _event("evt_b", title="Call Jane +1 555 123 4567"),
+    ])
 
     result = sync_appointments(
         db_session,
@@ -56,11 +52,11 @@ def test_sync_creates_appointments_with_customer_match(db_session, tenant, custo
 
 
 def test_resync_updates_without_duplicates(db_session, tenant, customer):
-    client = FakeGoogleCalendarClient([_event("evt_a", summary="Old title")])
+    client = FakeGoogleCalendarClient([_event("evt_a", title="Old title")])
     kwargs = dict(tenant_id=tenant.id, time_min=BASE, time_max=BASE + timedelta(days=7))
 
     sync_appointments(db_session, client, **kwargs)
-    client.events[0]["summary"] = "New title"
+    client.events[0] = _event("evt_a", title="New title")
     result = sync_appointments(db_session, client, **kwargs)
 
     assert result.created == 0
@@ -70,16 +66,14 @@ def test_resync_updates_without_duplicates(db_session, tenant, customer):
     assert db_session.scalars(select(Appointment)).one().title == "New title"
 
 
-def test_all_day_events_are_skipped(db_session, tenant):
-    all_day = {
-        "id": "evt_c",
-        "summary": "Company offsite",
-        "start": {"date": "2026-09-02"},
-        "end": {"date": "2026-09-03"},
-    }
+def test_unparseable_start_is_skipped(db_session, tenant):
+    class StubClient:
+        def list_events(self, time_min, time_max):
+            return [NormalizedEvent(id="evt_bad", title="Broken", start="not-a-date", end=None)]
+
     result = sync_appointments(
         db_session,
-        FakeGoogleCalendarClient([all_day]),
+        StubClient(),
         tenant_id=tenant.id,
         time_min=BASE,
         time_max=BASE + timedelta(days=7),

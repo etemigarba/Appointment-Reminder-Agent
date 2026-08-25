@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
@@ -149,46 +148,31 @@ SYNC_INTERVAL_SECONDS = 300  # PRD FR-2: poll at most every 5 minutes
 
 
 def run_sync_cycle(session_factory: sessionmaker, client_factory=None, *, now=None) -> int:
-    """Sync Google Calendar events for every tenant with a stored refresh token.
+    """Sync calendar events for every tenant with connected provider credentials.
 
-    `client_factory(tenant) -> GoogleCalendarClient` is injectable for tests.
-    Tenants without tokens are skipped; per-tenant failures are logged, not fatal.
-    Returns the number of tenants synced successfully.
+    `client_factory(tenant) -> CalendarProvider` is injectable for tests; by
+    default the provider is chosen from tenant.calendar_provider (google,
+    outlook, calendly). Per-tenant failures are logged, not fatal.
     """
     from datetime import UTC, datetime as dt, timedelta
 
     from sqlalchemy import select
 
-    from app.calendar_sync.client import GoogleCalendarRestClient
+    from app.calendar_sync.provider_factory import build_provider_client
     from app.calendar_sync.sync_service import sync_appointments
 
     now = now or dt.now(dt_timezone.utc)
     synced = 0
     with session_factory() as session:
-        tenants = session.scalars(
-            select(Tenant).where(Tenant.google_refresh_token.is_not(None))
-        ).all()
+        tenants = session.scalars(select(Tenant)).all()
         for tenant in tenants:
             try:
                 if client_factory is not None:
                     client = client_factory(tenant)
                 else:
-                    try:
-                        from google.oauth2.credentials import Credentials
-
-                        credentials = Credentials(
-                            token=None,
-                            refresh_token=tenant.google_refresh_token,
-                            client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-                            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-                            token_uri="https://oauth2.googleapis.com/token",
-                        )
-                    except ImportError:
-                        logger.warning("google extra not installed; skipping live sync")
-                        break
-                    client = GoogleCalendarRestClient(
-                        credentials, calendar_id=tenant.google_calendar_id or "primary"
-                    )
+                    client = build_provider_client(tenant)
+                if client is None:
+                    continue
                 sync_appointments(
                     session,
                     client,

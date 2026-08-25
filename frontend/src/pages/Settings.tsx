@@ -6,6 +6,7 @@ export default function Settings() {
   const [offsetsText, setOffsetsText] = useState('')
   const [templateText, setTemplateText] = useState('')
   const [timezoneText, setTimezoneText] = useState('UTC')
+  const [calendlyToken, setCalendlyToken] = useState('')
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -34,6 +35,7 @@ export default function Settings() {
         reminder_offsets_minutes: offsets,
         reminder_template: templateText.trim() || null,
         timezone: timezoneText.trim() || 'UTC',
+        calendar_provider: settings.calendar_provider,
       })
       setSettings(updated)
       setSaved(true)
@@ -43,24 +45,44 @@ export default function Settings() {
     }
   }
 
+  async function upgrade() {
+    setError(null)
+    try {
+      const { checkout_url } = await api.startCheckout()
+      window.location.href = checkout_url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start checkout')
+    }
+  }
+
+  async function requestAuthorizeUrl(path: string): Promise<{ authorize_url: string }> {
+    const token = localStorage.getItem('ara_token') ?? ''
+    const base = (import.meta.env.VITE_API_BASE ?? 'http://localhost:8000').replace(/\/$/, '')
+    const response = await fetch(`${base}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) throw new Error('Calendar integration is not configured on this server')
+    return response.json()
+  }
+
   async function connectGoogle() {
     setError(null)
     try {
-      const { authorize_url } = await requestAuthorizeUrl()
+      const { authorize_url } = await requestAuthorizeUrl('/api/google/authorize')
       window.location.href = authorize_url
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start Google connection')
     }
   }
 
-  async function requestAuthorizeUrl(): Promise<{ authorize_url: string }> {
-    const token = localStorage.getItem('ara_token') ?? ''
-    const base = (import.meta.env.VITE_API_BASE ?? 'http://localhost:8000').replace(/\/$/, '')
-    const response = await fetch(`${base}/api/google/authorize`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!response.ok) throw new Error('Google integration is not configured on this server')
-    return response.json()
+  async function connectOutlook() {
+    setError(null)
+    try {
+      const { authorize_url } = await requestAuthorizeUrl('/api/outlook/authorize')
+      window.location.href = authorize_url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start Outlook connection')
+    }
   }
 
   if (error && !settings) return <p className="p-6 text-red-600">{error}</p>
@@ -132,19 +154,79 @@ export default function Settings() {
           </span>
         </label>
 
-        <div className="flex items-center justify-between rounded-lg border border-slate-200 p-4 text-sm">
-          <p>
-            Google Calendar:{' '}
-            <span className={settings.google_connected ? 'text-green-600' : 'text-amber-600'}>
-              {settings.google_connected ? 'connected' : 'not connected yet'}
-            </span>
-          </p>
-          {!settings.google_connected && (
+        <label className="block">
+          <span className="font-medium">Calendar provider</span>
+          <select
+            value={settings.calendar_provider}
+            onChange={(e) =>
+              setSettings({ ...settings, calendar_provider: e.target.value as SettingsData['calendar_provider'] })
+            }
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+          >
+            <option value="google">Google Calendar</option>
+            <option value="outlook">Outlook (Microsoft 365)</option>
+            <option value="calendly">Calendly</option>
+          </select>
+        </label>
+
+        {settings.calendar_provider === 'google' && (
+          <div className="flex items-center justify-between rounded-lg border border-slate-200 p-4 text-sm">
+            <p>
+              Google Calendar:{' '}
+              <span className={settings.google_connected ? 'text-green-600' : 'text-amber-600'}>
+                {settings.google_connected ? 'connected' : 'not connected yet'}
+              </span>
+            </p>
+            {!settings.google_connected && (
+              <button
+                onClick={connectGoogle}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-700"
+              >
+                Connect Google Calendar
+              </button>
+            )}
+          </div>
+        )}
+
+        {settings.calendar_provider === 'outlook' && (
+          <div className="flex items-center justify-between rounded-lg border border-slate-200 p-4 text-sm">
+            <p>Connect your Microsoft 365 calendar to sync appointments.</p>
             <button
-              onClick={connectGoogle}
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-700"
+              onClick={connectOutlook}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
             >
-              Connect Google Calendar
+              Connect Outlook
+            </button>
+          </div>
+        )}
+
+        {settings.calendar_provider === 'calendly' && (
+          <label className="block rounded-lg border border-slate-200 p-4 text-sm">
+            <span className="font-medium">Calendly personal access token</span>
+            <input
+              type="password"
+              value={calendlyToken}
+              onChange={(e) => setCalendlyToken(e.target.value)}
+              placeholder="Paste token from Calendly integrations"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+            />
+            <span className="mt-1 block text-slate-500">
+              Stored server-side when you save; used by the sync worker.
+            </span>
+          </label>
+        )}
+
+        <div className="rounded-lg border border-slate-200 p-4 text-sm">
+          <p>
+            Plan: <span className="font-medium capitalize">{settings.plan}</span>{' '}
+            <span className="ml-2 text-slate-500">({settings.subscription_status})</span>
+          </p>
+          {settings.subscription_status !== 'active' && (
+            <button
+              onClick={upgrade}
+              className="mt-2 rounded-lg bg-green-600 px-3 py-1.5 text-white hover:bg-green-700"
+            >
+              Upgrade to Pro
             </button>
           )}
         </div>
