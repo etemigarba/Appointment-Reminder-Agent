@@ -78,13 +78,32 @@ def test_settings_roundtrip_and_persist(client):
     patched = client.patch(
         "/api/settings",
         headers=_auth(token),
-        json={"approval_mode": False, "reminder_offsets_minutes": [-1440, -120, -30]},
+        json={
+            "approval_mode": False,
+            "reminder_offsets_minutes": [-1440, -120, -30],
+            "reminder_template": "Hi {name}, see you {date} {time} — {business}",
+            "timezone": "Europe/London",
+        },
     )
     fetched = client.get("/api/settings", headers=_auth(token))
 
     assert patched.status_code == 200
     assert patched.json()["approval_mode"] is False
     assert fetched.json()["reminder_offsets_minutes"] == [-1440, -120, -30]
+    assert fetched.json()["reminder_template"] == "Hi {name}, see you {date} {time} — {business}"
+    assert fetched.json()["timezone"] == "Europe/London"
+
+
+def test_invalid_timezone_rejected(client):
+    token = _register(client).json()["access_token"]
+
+    response = client.patch(
+        "/api/settings",
+        headers=_auth(token),
+        json={"timezone": "Mars/Olympus"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_invalid_offsets_rejected(client):

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.entities import Appointment, AppointmentStatus, ReminderJob, ReminderJobStatus, utcnow
 
 DEFAULT_OFFSETS_MINUTES: tuple[int, ...] = (-1440, -120)
+LATENESS_GRACE_MINUTES = 15
 REMINDER_ELIGIBLE_STATUSES = (
     AppointmentStatus.SCHEDULED.value,
     AppointmentStatus.CONFIRMED.value,
@@ -54,7 +55,9 @@ def generate_reminder_jobs(
             if offset in existing or offset >= 0:
                 continue
             due_at = appointment.start_at + timedelta(minutes=offset)
-            if due_at < now:
+            # Lateness grace: a reminder that came due shortly ago is still
+            # created (and sent immediately); older ones count as missed.
+            if due_at < now - timedelta(minutes=LATENESS_GRACE_MINUTES):
                 continue
             job = ReminderJob(
                 appointment_id=appointment.id,

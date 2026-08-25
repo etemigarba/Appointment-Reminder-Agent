@@ -13,6 +13,7 @@ from app.agents.llm_client import LLMClient
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
+from app.api.google_oauth import router as google_oauth_router
 from app.api.health import router as health_router
 from app.api.webhooks import router as webhooks_router
 from app.core.db import make_engine, make_session_factory
@@ -48,6 +49,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(dashboard_router)
+    app.include_router(google_oauth_router)
     app.include_router(webhooks_router)
     app.include_router(admin_router)
     return app

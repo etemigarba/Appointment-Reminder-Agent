@@ -10,7 +10,7 @@ import logging
 from app.channels.senders import build_adapters
 from app.core.config import get_settings
 from app.core.db import make_engine, make_session_factory
-from app.scheduler.runner import build_scheduler
+from app.scheduler.runner import build_scheduler, run_sync_cycle
 
 
 def main() -> None:
@@ -19,6 +19,7 @@ def main() -> None:
     engine = make_engine()
     factory = make_session_factory(engine)
     adapters = build_adapters()
+
     scheduler = build_scheduler(
         factory,
         adapters,
@@ -26,6 +27,17 @@ def main() -> None:
         offsets_minutes=(-1440, -120),
         horizon_hours=settings.reminder_horizon_hours,
     )
+
+    def sync_tick() -> None:
+        try:
+            count = run_sync_cycle(factory)
+            if count:
+                logging.getLogger(__name__).info("Synced calendars for %d tenant(s)", count)
+        except Exception:
+            logging.getLogger(__name__).exception("Calendar sync cycle failed")
+
+    scheduler.add_job(sync_tick, "interval", seconds=300, id="calendar-sync", max_instances=1)
+
     logging.getLogger(__name__).info("Reminder worker started (interval=%ss)", settings.dispatch_interval_seconds)
     try:
         scheduler.start()

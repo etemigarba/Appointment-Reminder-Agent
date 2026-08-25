@@ -5,6 +5,8 @@ export interface Settings {
   email: string
   approval_mode: boolean
   reminder_offsets_minutes: number[]
+  reminder_template: string | null
+  timezone: string
   twilio_number: string | null
   google_connected: boolean
 }
@@ -80,7 +82,11 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   getSettings: () => request<Settings>('/api/settings'),
-  patchSettings: (payload: Partial<Pick<Settings, 'approval_mode' | 'reminder_offsets_minutes'>>) =>
+  patchSettings: (
+    payload: Partial<
+      Pick<Settings, 'approval_mode' | 'reminder_offsets_minutes' | 'reminder_template' | 'timezone'>
+    >,
+  ) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
   listAppointments: () => request<Appointment[]>('/api/appointments'),
   listConversations: () => request<Conversation[]>('/api/conversations'),

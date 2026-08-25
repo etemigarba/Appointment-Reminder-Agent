@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.channels.templates import MAX_TEMPLATE_LENGTH
 from app.core.deps import CurrentTenant, DbSession
 from app.models.entities import (
     Appointment,
@@ -20,6 +23,8 @@ router = APIRouter(prefix="/api")
 class SettingsIn(BaseModel):
     approval_mode: bool | None = None
     reminder_offsets_minutes: list[int] | None = None
+    reminder_template: str | None = Field(default=None, max_length=MAX_TEMPLATE_LENGTH)
+    timezone: str | None = None
 
 
 class SettingsOut(BaseModel):
@@ -27,6 +32,8 @@ class SettingsOut(BaseModel):
     email: str
     approval_mode: bool
     reminder_offsets_minutes: list[int]
+    reminder_template: str | None
+    timezone: str
     twilio_number: str | None
     google_connected: bool
 
@@ -56,11 +63,17 @@ class MessageOut(BaseModel):
 
 @router.get("/settings", response_model=SettingsOut)
 def get_settings(tenant: CurrentTenant):
+    return _settings_out(tenant)
+
+
+def _settings_out(tenant) -> SettingsOut:
     return SettingsOut(
         name=tenant.name,
         email=tenant.email,
         approval_mode=tenant.approval_mode,
         reminder_offsets_minutes=tenant.reminder_offsets_minutes or [-1440, -120],
+        reminder_template=tenant.reminder_template,
+        timezone=tenant.timezone or "UTC",
         twilio_number=tenant.twilio_number,
         google_connected=bool(tenant.google_refresh_token),
     )
@@ -75,8 +88,16 @@ def patch_settings(payload: SettingsIn, tenant: CurrentTenant, session: DbSessio
         if not offsets or any(o >= 0 for o in offsets):
             raise HTTPException(status_code=422, detail="Offsets must be negative minutes before start")
         tenant.reminder_offsets_minutes = offsets
+    if payload.reminder_template is not None:
+        tenant.reminder_template = payload.reminder_template.strip() or None
+    if payload.timezone is not None:
+        try:
+            ZoneInfo(payload.timezone)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="Unknown IANA timezone") from exc
+        tenant.timezone = payload.timezone
     session.commit()
-    return get_settings(tenant)
+    return _settings_out(tenant)
 
 
 @router.get("/appointments", response_model=list[AppointmentOut])

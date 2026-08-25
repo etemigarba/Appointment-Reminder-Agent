@@ -100,6 +100,8 @@ class Tenant(Base):
     password_hash: Mapped[str] = mapped_column(String(200))
     approval_mode: Mapped[bool] = mapped_column(Boolean, default=True)
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=lambda: [-1440, -120])
+    reminder_template: Mapped[str | None] = mapped_column(Text, default=None)
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     google_refresh_token: Mapped[str | None] = mapped_column(String(500), default=None)
     google_calendar_id: Mapped[str | None] = mapped_column(String(320), default=None)
     twilio_number: Mapped[str | None] = mapped_column(String(32), unique=True, default=None)
