@@ -1,0 +1,81 @@
+# Deploys to AWS on pushes to main after CI passes.
+# Requires repository environment "production" with these secrets configured:
+#   AWS_ROLE_ARN        – OIDC role for GitHub Actions to assume
+#   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_SMS_FROM / TWILIO_WHATSAPP_FROM
+#   RESEND_API_KEY / RESEND_FROM
+#   DEEPSEEK_API_KEY
+name: deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build and push backend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build -f backend/Dockerfile.backend -t "$REGISTRY/appointment-agent:$SHA" backend
+          docker push "$REGISTRY/appointment-agent:$SHA"
+          docker tag "$REGISTRY/appointment-agent:$SHA" "$REGISTRY/appointment-agent:latest"
+          docker push "$REGISTRY/appointment-agent:latest"
+      - name: Sync SPA to S3
+        env:
+          BUCKET: appointment-agent-frontend
+          SHA: ${{ github.sha }}
+        run: |
+          cd frontend && npm ci --no-audit --no-fund || npm install --no-audit --no-fund && npm run build
+          aws s3 sync dist/ "s3://$BUCKET/" --delete
+
+  migrate-and-deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+      - name: Terraform apply
+        env:
+          TF_VAR_image_tag: ${{ github.sha }}
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+      - name: Force new API deployment
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          aws ecs update-service --cluster appointment-agent \
+            --service appointment-agent-api --force-new-deployment > /dev/null
+          echo "Deployed $SHA"
