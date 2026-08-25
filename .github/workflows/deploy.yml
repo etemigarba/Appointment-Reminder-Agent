@@ -1,6 +1,6 @@
-# Deploys to AWS on pushes to main after CI passes.
+﻿# Deploys to AWS on pushes to main after CI passes.
 # Requires repository environment "production" with these secrets configured:
-#   AWS_ROLE_ARN        – OIDC role for GitHub Actions to assume
+#   AWS_ROLE_ARN        â€“ OIDC role for GitHub Actions to assume
 #   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_SMS_FROM / TWILIO_WHATSAPP_FROM
 #   RESEND_API_KEY / RESEND_FROM
 #   DEEPSEEK_API_KEY
@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   build-and-push:
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -50,6 +51,7 @@ jobs:
           aws s3 sync dist/ "s3://$BUCKET/" --delete
 
   migrate-and-deploy:
+    if: vars.DEPLOY_ENABLED == 'true'
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: production
